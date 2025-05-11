@@ -1,0 +1,3 @@
+.env
+vault-init/output/init.json
+/policies

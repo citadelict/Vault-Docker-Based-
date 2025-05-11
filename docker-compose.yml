@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  vault:
+    image: hashicorp/vault:1.18
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_ADDR=http://127.0.0.1:8200
+      - VAULT_LOCAL_CONFIG=${VAULT_LOCAL_CONFIG}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    ports:
+      - "8200:8200"
+    command: server
+    volumes:
+      - vault_data:/vault/file
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - vaultnet
+
+  vault-init:
+    build: ./vault-init
+    container_name: vault-init
+    environment:
+      - VAULT_ADDR=http://vault:8200
+    volumes:
+      - ./vault-init/output:/vault-init/output
+    depends_on:
+      - vault
+    restart: on-failure
+    networks:
+      - vaultnet
+
+volumes:
+  vault_data:
+    name: vault_data
+
+networks:
+  vaultnet:
+    driver: bridge
+

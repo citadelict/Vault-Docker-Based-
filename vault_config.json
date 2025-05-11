@@ -1,0 +1,33 @@
+{
+  "storage": {
+    "file": {
+      "path": "/vault/file"
+    }
+  },
+  "listener": [
+    {
+      "tcp": {
+        "address": "0.0.0.0:8200",
+        "tls_disable": true
+      }
+    }
+  ],
+  "default_lease_ttl": "168h",
+  "max_lease_ttl": "720h",
+  "ui": true,
+  "audit": [
+    {
+      "type": "file",
+      "options": {
+        "path": "stdout",
+        "log_raw": "true"
+      }
+    }
+  ],
+  "seal": {
+    "awskms": {
+      "kms_key_id": "${AWS_KMS_KEY_ID}",
+      "region": "${AWS_DEFAULT_REGION}"
+    }
+  }
+}
