@@ -1,105 +1,49 @@
-name: Deploy Vault to VPS
+version: '3.8'
 
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+services:
+  vault:
+    image: hashicorp/vault:1.18
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_ADDR=http://127.0.0.1:8200
+      - VAULT_LOCAL_CONFIG=${VAULT_LOCAL_CONFIG}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    ports:
+      - "8200:8200"
+    command: server
+    volumes:
+      - vault_data:/vault/file
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - vaultnet
 
-jobs:
-  deploy:
-    name: Deploy Vault to VPS
-    runs-on: ubuntu-latest
+  vault-init:
+    build: ./vault-init
+    container_name: vault-init
+    environment:
+      - VAULT_ADDR=http://vault:8200
+    volumes:
+      - ./vault-init/output:/vault-init/output
+    depends_on:
+      - vault
+    restart: on-failure
+    networks:
+      - vaultnet
 
-    steps:
-      # Step 1: Checkout repository
-      - name: Checkout repository
-        uses: actions/checkout@v4
+volumes:
+  vault_data:
+    name: vault_data
 
-      # Step 2: Validate and preprocess vault_config.json
-      - name: Validate and preprocess vault_config.json
-        env:
-          AWS_KMS_KEY_ID: ${{ secrets.AWS_KMS_KEY_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        run: |
-          jq . vault_config.json || { echo "ERROR: Invalid JSON in vault_config.json"; exit 1; }
-          if [ -z "$AWS_KMS_KEY_ID" ]; then echo "ERROR: AWS_KMS_KEY_ID not set"; exit 1; fi
-          if [ -z "$AWS_DEFAULT_REGION" ]; then echo "ERROR: AWS_DEFAULT_REGION not set"; exit 1; fi
-          # Replace variables with actual secrets
-          envsubst < vault_config.json > vault_config_processed.json
-          jq . vault_config_processed.json || { echo "ERROR: Invalid JSON after preprocessing"; exit 1; }
-          mv vault_config_processed.json vault_config.json
+networks:
+  vaultnet:
+    driver: bridge
 
-      # Step 3: Copy repository files to VPS
-      - name: Copy files to VPS
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.VPS_IP }}
-          username: root
-          password: ${{ secrets.VPS_PASSWORD }}
-          port: 22
-          source: "./*"
-          target: "/root/Vault-Docker-Based-"
-
-      # Step 4: Write environment variables to .env on VPS
-      - name: Write environment variables to .env
-        run: |
-          echo "COMPOSE_PROJECT_NAME=vault-prod" > env.txt
-          echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> env.txt
-          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> env.txt
-          echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> env.txt
-          echo "AWS_KMS_KEY_ID=${{ secrets.AWS_KMS_KEY_ID }}" >> env.txt
-          sshpass -p "${{ secrets.VPS_PASSWORD }}" ssh -o StrictHostKeyChecking=no root@${{ secrets.VPS_IP }} "mkdir -p /root/Vault-Docker-Based- && cat > /root/Vault-Docker-Based-/.env" < env.txt
-
-      # Step 5: Deploy Vault using Docker Compose
-      - name: Deploy Vault with Docker Compose
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_IP }}
-          username: root
-          password: ${{ secrets.VPS_PASSWORD }}
-          port: 22
-          script: |
-            cd /root/Vault-Docker-Based-
-
-            # Display files for debugging
-            cat .env || echo "ERROR: .env file missing"
-            cat vault_config.json || echo "ERROR: vault_config.json missing"
-
-            # Stop existing containers
-            sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans
-
-            # Pull latest images
-            sudo docker compose -f docker-compose.yml --project-name vault-prod pull
-
-            # Start containers
-            sudo docker compose -f docker-compose.yml --project-name vault-prod up -d --build
-
-            # Wait for Vault to be healthy
-            for i in {1..30}; do
-              if docker inspect vault | grep -q '"Status": "healthy"'; then
-                echo "Vault is healthy"
-                break
-              fi
-              echo "Waiting for Vault to become healthy..."
-              sleep 5
-            done
-
-            # Wait for vault-init container to finish
-            for i in {1..30}; do
-              if docker inspect vault-init | grep -q '"Status": "exited"'; then
-                echo "vault-init has completed"
-                break
-              fi
-              echo "Waiting for vault-init to complete..."
-              sleep 5
-            done
-
-            # Check initialization output
-            ls -l vault-init/output || echo "ERROR: vault-init/output not found"
-            cat vault-init/output/* || echo "ERROR: No initialization output"
-
-            # Confirm containers and logs
-            docker ps -a
-            docker logs vault || echo "ERROR: Failed to get vault logs"
-            docker logs vault-init || echo "ERROR: Failed to get vault-init logs"

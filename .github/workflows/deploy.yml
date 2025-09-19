@@ -8,33 +8,22 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Vault to VPS
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Validate and preprocess vault_config.json locally
-      - name: Validate and preprocess vault_config.json
+      - name: Preprocess vault_config.json
         run: |
-          # Ensure the JSON is valid
-          jq . vault_config.json || { echo "ERROR: Invalid JSON in vault_config.json"; exit 1; }
-          
-          # Replace placeholders with actual secrets (avoids GitHub env interpolation issues)
+          # Replace placeholders with secrets
           AWS_KMS_KEY_ID="${{ secrets.AWS_KMS_KEY_ID }}" \
           AWS_DEFAULT_REGION="${{ secrets.AWS_DEFAULT_REGION }}" \
           envsubst < vault_config.json > vault_config_processed.json
-          
-          # Validate processed JSON
-          jq . vault_config_processed.json || { echo "ERROR: Invalid JSON after preprocessing"; exit 1; }
-          
-          # Replace original JSON
           mv vault_config_processed.json vault_config.json
+          jq . vault_config.json
 
-      # Step 3: Copy repository files to VPS
-      - name: Copy files to VPS
+      - name: Copy repository to VPS
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.VPS_IP }}
@@ -44,20 +33,16 @@ jobs:
           source: "./*"
           target: "/root/Vault-Docker-Based-"
 
-      # Step 4: Write environment variables to .env on VPS
-      - name: Write environment variables to .env
+      - name: Write .env file on VPS
         run: |
           echo "COMPOSE_PROJECT_NAME=vault-prod" > env.txt
           echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> env.txt
           echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> env.txt
           echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> env.txt
           echo "AWS_KMS_KEY_ID=${{ secrets.AWS_KMS_KEY_ID }}" >> env.txt
-          
-          # Copy .env to VPS using password SSH
           sshpass -p "${{ secrets.VPS_PASSWORD }}" ssh -o StrictHostKeyChecking=no root@${{ secrets.VPS_IP }} \
             "mkdir -p /root/Vault-Docker-Based- && cat > /root/Vault-Docker-Based-/.env" < env.txt
 
-      # Step 5: Deploy Vault using Docker Compose
       - name: Deploy Vault with Docker Compose
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -68,20 +53,16 @@ jobs:
           script: |
             cd /root/Vault-Docker-Based-
 
-            # Debugging: check files
-            cat .env || echo "ERROR: .env file missing"
-            cat vault_config.json || echo "ERROR: vault_config.json missing"
-
-            # Stop existing containers (ignore if none exist)
-            sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans || echo "No existing containers to remove"
+            # Stop old containers (ignore errors)
+            sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans || true
 
             # Pull latest images
             sudo docker compose -f docker-compose.yml --project-name vault-prod pull
 
-            # Start containers
+            # Start Vault containers
             sudo docker compose -f docker-compose.yml --project-name vault-prod up -d --build
 
-            # Wait for Vault to be healthy
+            # Wait for Vault to become healthy
             for i in {1..30}; do
               if docker inspect vault | grep -q '"Status": "healthy"'; then
                 echo "Vault is healthy"
@@ -91,7 +72,7 @@ jobs:
               sleep 5
             done
 
-            # Wait for vault-init container to complete
+            # Wait for vault-init to complete
             for i in {1..30}; do
               if docker inspect vault-init | grep -q '"Status": "exited"'; then
                 echo "vault-init has completed"
@@ -101,12 +82,11 @@ jobs:
               sleep 5
             done
 
-            # Check initialization output
+            # Show vault-init output
             ls -l vault-init/output || echo "ERROR: vault-init/output not found"
-            cat vault-init/output/* || echo "ERROR: No initialization output"
+            cat vault-init/output/* || echo "No initialization output"
 
-            # Confirm containers and logs
-            echo "New containers:"
+            # Show containers and logs
             docker ps -a
-            docker logs vault || echo "ERROR: Failed to get vault logs"
-            docker logs vault-init || echo "ERROR: Failed to get vault-init logs"
+            docker logs vault
+            docker logs vault-init
