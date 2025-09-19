@@ -8,14 +8,14 @@ services:
       - IPC_LOCK
     environment:
       - VAULT_ADDR=http://127.0.0.1:8200
-      - VAULT_LOCAL_CONFIG=${VAULT_LOCAL_CONFIG}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
     ports:
       - "8200:8200"
-    command: server
+    command: server -config=/vault/config/config.json
     volumes:
+      - ./vault_config.json:/vault/config/config.json:ro
       - vault_data:/vault/file
     healthcheck:
       test: ["CMD", "vault", "status"]
@@ -46,4 +46,3 @@ volumes:
 networks:
   vaultnet:
     driver: bridge
-
