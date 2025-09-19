@@ -22,7 +22,7 @@ jobs:
           # Ensure the JSON is valid
           jq . vault_config.json || { echo "ERROR: Invalid JSON in vault_config.json"; exit 1; }
           
-          # Replace placeholders with actual secrets without using `env:` (avoids interpolation errors)
+          # Replace placeholders with actual secrets (avoids GitHub env interpolation issues)
           AWS_KMS_KEY_ID="${{ secrets.AWS_KMS_KEY_ID }}" \
           AWS_DEFAULT_REGION="${{ secrets.AWS_DEFAULT_REGION }}" \
           envsubst < vault_config.json > vault_config_processed.json
@@ -30,7 +30,7 @@ jobs:
           # Validate processed JSON
           jq . vault_config_processed.json || { echo "ERROR: Invalid JSON after preprocessing"; exit 1; }
           
-          # Replace the original JSON with the processed one
+          # Replace original JSON
           mv vault_config_processed.json vault_config.json
 
       # Step 3: Copy repository files to VPS
@@ -53,12 +53,12 @@ jobs:
           echo "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" >> env.txt
           echo "AWS_KMS_KEY_ID=${{ secrets.AWS_KMS_KEY_ID }}" >> env.txt
           
-          # Copy .env to VPS using sshpass
+          # Copy .env to VPS using password SSH
           sshpass -p "${{ secrets.VPS_PASSWORD }}" ssh -o StrictHostKeyChecking=no root@${{ secrets.VPS_IP }} \
             "mkdir -p /root/Vault-Docker-Based- && cat > /root/Vault-Docker-Based-/.env" < env.txt
 
-      # Step 5: Deploy Vault with Docker Compose
-      - name: Deploy Vault using Docker Compose
+      # Step 5: Deploy Vault using Docker Compose
+      - name: Deploy Vault with Docker Compose
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_IP }}
@@ -72,8 +72,8 @@ jobs:
             cat .env || echo "ERROR: .env file missing"
             cat vault_config.json || echo "ERROR: vault_config.json missing"
 
-            # Stop existing containers
-            sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans
+            # Stop existing containers (ignore if none exist)
+            sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans || echo "No existing containers to remove"
 
             # Pull latest images
             sudo docker compose -f docker-compose.yml --project-name vault-prod pull
@@ -81,7 +81,7 @@ jobs:
             # Start containers
             sudo docker compose -f docker-compose.yml --project-name vault-prod up -d --build
 
-            # Wait for Vault container to be healthy
+            # Wait for Vault to be healthy
             for i in {1..30}; do
               if docker inspect vault | grep -q '"Status": "healthy"'; then
                 echo "Vault is healthy"
@@ -106,6 +106,7 @@ jobs:
             cat vault-init/output/* || echo "ERROR: No initialization output"
 
             # Confirm containers and logs
+            echo "New containers:"
             docker ps -a
             docker logs vault || echo "ERROR: Failed to get vault logs"
             docker logs vault-init || echo "ERROR: Failed to get vault-init logs"
