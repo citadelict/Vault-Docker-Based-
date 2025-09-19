@@ -7,12 +7,14 @@ services:
     cap_add:
       - IPC_LOCK
     environment:
+      - VAULT_ADDR=http://127.0.0.1:8200
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - AWS_KMS_KEY_ID=${AWS_KMS_KEY_ID}
     ports:
       - "8200:8200"
-    command: server -config=/vault/config/config.json
+    command: server
     volumes:
       - ./vault_config.json:/vault/config/config.json:ro
       - vault_data:/vault/file
