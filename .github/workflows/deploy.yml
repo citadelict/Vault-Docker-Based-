@@ -75,24 +75,29 @@ jobs:
             sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans
             sudo docker compose -f docker-compose.yml --project-name vault-prod pull
             sudo docker compose -f docker-compose.yml --project-name vault-prod up -d --build
+
+            # Get actual container names
+            VAULT_CONTAINER=$(sudo docker ps -a --format '{{.Names}}' | grep '^vault-prod-vault')
+            VAULT_INIT_CONTAINER=$(sudo docker ps -a --format '{{.Names}}' | grep '^vault-prod-vault-init')
+
             for i in {1..30}; do
-              if sudo docker inspect vault | grep -q '"Status": "healthy"'; then
-                echo "vault is healthy"
+              if [ -n "$VAULT_CONTAINER" ] && sudo docker inspect "$VAULT_CONTAINER" | grep -q '"Status": "healthy"'; then
+                echo "$VAULT_CONTAINER is healthy"
                 break
               fi
-              echo "Waiting for vault to be healthy..."
+              echo "Waiting for $VAULT_CONTAINER to be healthy..."
               sleep 5
             done
             for i in {1..30}; do
-              if sudo docker inspect vault-init | grep -q '"Status": "exited"'; then
-                echo "vault-init has completed"
+              if [ -n "$VAULT_INIT_CONTAINER" ] && sudo docker inspect "$VAULT_INIT_CONTAINER" | grep -q '"Status": "exited"'; then
+                echo "$VAULT_INIT_CONTAINER has completed"
                 break
               fi
-              echo "Waiting for vault-init to complete..."
+              echo "Waiting for $VAULT_INIT_CONTAINER to complete..."
               sleep 5
             done
             ls -l vault-init/output || echo "ERROR: vault-init/output not found"
             cat vault-init/output/* || echo "ERROR: No initialization output"
             sudo docker ps -a
-            sudo docker logs vault || echo "ERROR: Failed to get vault logs"
-            sudo docker logs vault-init || echo "ERROR: Failed to get vault-init logs"
+            sudo docker logs "$VAULT_CONTAINER" || echo "ERROR: Failed to get vault logs"
+            sudo docker logs "$VAULT_INIT_CONTAINER" || echo "ERROR: Failed to get vault-init logs"
