@@ -12,9 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Step 2: Validate and preprocess vault_config.json
       - name: Validate and preprocess vault_config.json
         env:
           AWS_KMS_KEY_ID: ${{ secrets.AWS_KMS_KEY_ID }}
@@ -23,11 +25,13 @@ jobs:
           jq . vault_config.json || { echo "ERROR: Invalid JSON in vault_config.json"; exit 1; }
           if [ -z "$AWS_KMS_KEY_ID" ]; then echo "ERROR: AWS_KMS_KEY_ID not set"; exit 1; fi
           if [ -z "$AWS_DEFAULT_REGION" ]; then echo "ERROR: AWS_DEFAULT_REGION not set"; exit 1; fi
+          # Replace variables with actual secrets
           envsubst < vault_config.json > vault_config_processed.json
           jq . vault_config_processed.json || { echo "ERROR: Invalid JSON after preprocessing"; exit 1; }
           mv vault_config_processed.json vault_config.json
 
-      - name: Copy all repository files to VPS
+      # Step 3: Copy repository files to VPS
+      - name: Copy files to VPS
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.VPS_IP }}
@@ -37,6 +41,7 @@ jobs:
           source: "./*"
           target: "/root/Vault-Docker-Based-"
 
+      # Step 4: Write environment variables to .env on VPS
       - name: Write environment variables to .env
         run: |
           echo "COMPOSE_PROJECT_NAME=vault-prod" > env.txt
@@ -46,6 +51,7 @@ jobs:
           echo "AWS_KMS_KEY_ID=${{ secrets.AWS_KMS_KEY_ID }}" >> env.txt
           sshpass -p "${{ secrets.VPS_PASSWORD }}" ssh -o StrictHostKeyChecking=no root@${{ secrets.VPS_IP }} "mkdir -p /root/Vault-Docker-Based- && cat > /root/Vault-Docker-Based-/.env" < env.txt
 
+      # Step 5: Deploy Vault using Docker Compose
       - name: Deploy Vault with Docker Compose
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -54,38 +60,24 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           port: 22
           script: |
-            # Install Docker if not present
-            if ! command -v docker >/dev/null 2>&1; then
-              apt-get update
-              apt-get install -y ca-certificates curl gnupg lsb-release sshpass
-              mkdir -p /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-              echo \
-                "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-                $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-              apt-get update
-              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            fi
-
             cd /root/Vault-Docker-Based-
 
-            # Ensure env variables are loaded
-            set -a
-            source .env
-            set +a
+            # Display files for debugging
+            cat .env || echo "ERROR: .env file missing"
+            cat vault_config.json || echo "ERROR: vault_config.json missing"
 
-            # Stop and remove old containers
-            sudo docker compose --env-file .env -f docker-compose.yml --project-name vault-prod down --remove-orphans
+            # Stop existing containers
+            sudo docker compose -f docker-compose.yml --project-name vault-prod down --remove-orphans
 
             # Pull latest images
-            sudo docker compose --env-file .env -f docker-compose.yml --project-name vault-prod pull
+            sudo docker compose -f docker-compose.yml --project-name vault-prod pull
 
             # Start containers
-            sudo docker compose --env-file .env -f docker-compose.yml --project-name vault-prod up -d --build
+            sudo docker compose -f docker-compose.yml --project-name vault-prod up -d --build
 
-            # Wait for Vault container to be healthy
+            # Wait for Vault to be healthy
             for i in {1..30}; do
-              if sudo docker inspect vault | grep -q '"Status": "healthy"'; then
+              if docker inspect vault | grep -q '"Status": "healthy"'; then
                 echo "Vault is healthy"
                 break
               fi
@@ -93,9 +85,9 @@ jobs:
               sleep 5
             done
 
-            # Wait for vault-init container to complete
+            # Wait for vault-init container to finish
             for i in {1..30}; do
-              if sudo docker inspect vault-init | grep -q '"Status": "exited"'; then
+              if docker inspect vault-init | grep -q '"Status": "exited"'; then
                 echo "vault-init has completed"
                 break
               fi
@@ -103,11 +95,11 @@ jobs:
               sleep 5
             done
 
-            # Output initialization logs
+            # Check initialization output
             ls -l vault-init/output || echo "ERROR: vault-init/output not found"
             cat vault-init/output/* || echo "ERROR: No initialization output"
 
-            # Final check
-            sudo docker ps -a
-            sudo docker logs vault || echo "ERROR: Failed to get Vault logs"
-            sudo docker logs vault-init || echo "ERROR: Failed to get vault-init logs"
+            # Confirm containers and logs
+            docker ps -a
+            docker logs vault || echo "ERROR: Failed to get vault logs"
+            docker logs vault-init || echo "ERROR: Failed to get vault-init logs"
