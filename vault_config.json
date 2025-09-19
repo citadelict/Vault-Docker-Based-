@@ -15,15 +15,6 @@
   "default_lease_ttl": "168h",
   "max_lease_ttl": "720h",
   "ui": true,
-  "audit": [
-    {
-      "type": "file",
-      "options": {
-        "path": "stdout",
-        "log_raw": "true"
-      }
-    }
-  ],
   "seal": {
     "awskms": {
       "kms_key_id": "${AWS_KMS_KEY_ID}",
